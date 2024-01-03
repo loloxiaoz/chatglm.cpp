@@ -14,19 +14,22 @@ logging.basicConfig(level=logging.INFO, format=r"%(asctime)s - %(module)s - %(le
 
 
 class Settings(BaseSettings):
-    model: str = "chatglm-ggml.bin"
+    model: str = "../chatglm3-6b-ggml.bin"
     num_threads: int = 0
 
+class FunctionCallResponse(BaseModel):
+    name: Optional[str] = None
+    arguments: Optional[str] = None
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
-
+    name: Optional[str] = None
+    function_call: Optional[List[FunctionCallResponse]] = None
 
 class DeltaMessage(BaseModel):
     role: Optional[Literal["system", "user", "assistant"]] = None
     content: Optional[str] = None
-
 
 class ChatCompletionRequest(BaseModel):
     model: str = "default-model"
@@ -35,11 +38,11 @@ class ChatCompletionRequest(BaseModel):
     top_p: float = Field(default=0.7, ge=0.0, le=1.0)
     stream: bool = False
     max_tokens: int = Field(default=2048, ge=0)
-
+    tools: Optional[object]
+    tool_choice: str
     model_config = {
         "json_schema_extra": {"examples": [{"model": "default-model", "messages": [{"role": "user", "content": "你好"}]}]}
     }
-
 
 class ChatCompletionResponseChoice(BaseModel):
     index: int = 0
@@ -147,7 +150,13 @@ async def create_chat_completion(body: ChatCompletionRequest) -> ChatCompletionR
     if not body.messages:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "empty messages")
 
-    messages = [chatglm_cpp.ChatMessage(role=msg.role, content=msg.content) for msg in body.messages]
+    messages = []
+    for msg in body.messages:
+        if msg.role == 'system':
+            messages.append(chatglm_cpp.ChatMessage(role=msg.role, content=msg.content + ''.join(str(x) for x in body.tools))) 
+        else: 
+            messages.append(chatglm_cpp.ChatMessage(role=msg.role, content=msg.content)) 
+    logging.info(f'message: "{messages}"')
 
     if body.stream:
         generator = stream_chat_event_publisher(messages, body)
@@ -162,13 +171,21 @@ async def create_chat_completion(body: ChatCompletionRequest) -> ChatCompletionR
         top_p=body.top_p,
         temperature=body.temperature,
     )
-    logging.info(f'prompt: "{messages[-1].content}", sync response: "{output.content}"')
+    logging.info(f'prompt: "{messages[-1].content}", sync response: "{output}"')
     prompt_tokens = len(pipeline.tokenizer.encode_messages(messages, max_context_length))
     completion_tokens = len(pipeline.tokenizer.encode(output.content, body.max_tokens))
 
+    function_calls = [FunctionCallResponse(name=tool_call.function.name, arguments=tool_call.function.arguments) for tool_call in output.tool_calls]
+    logging.info(f'function_call: "{function_calls}"')
+    message = ChatMessage(
+        role="assistant", 
+        content=output.content, 
+        function_call=function_calls)
+    choices = [ChatCompletionResponseChoice(message=message)]
+
     return ChatCompletionResponse(
         object="chat.completion",
-        choices=[ChatCompletionResponseChoice(message=ChatMessage(role="assistant", content=output.content))],
+        choices=choices,
         usage=ChatCompletionUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
     )
 

@@ -21,3 +21,4 @@ build/
 
 # clangd
 .cache/
+chatglm3-6b-ggml.bin*
