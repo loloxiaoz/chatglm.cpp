@@ -38,8 +38,8 @@ class ChatCompletionRequest(BaseModel):
     top_p: float = Field(default=0.7, ge=0.0, le=1.0)
     stream: bool = False
     max_tokens: int = Field(default=2048, ge=0)
-    tools: Optional[object]
-    tool_choice: str
+    tools: Optional[object] = None
+    tool_choice: str = "auto"
     model_config = {
         "json_schema_extra": {"examples": [{"model": "default-model", "messages": [{"role": "user", "content": "你好"}]}]}
     }
